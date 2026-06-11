@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# OS / Editor
+.DS_Store
+.vscode/
+
+# Logs
+logs/
+*.log
+
+# Data generated locally
+data/output/
+
+# Playwright / browser session artifacts
+.playwright/
+storage_state.json
+*.har
+*.trace.zip
+
+# Secrets / local config
+.env
+.env.*
