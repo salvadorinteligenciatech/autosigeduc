@@ -32,6 +32,15 @@ class ProfessorDataResult:
     current_url: str = ""
 
 
+@dataclass
+class AvaliacoesNavigationResult:
+    success: bool
+    status: str
+    message: str
+    data: dict[str, Any] | None = None
+    current_url: str = ""
+
+
 def _normalizar_texto(texto: str | None) -> str:
     """
     Remove quebras de linha e espaços duplicados.
@@ -183,6 +192,279 @@ def _extrair_turmas_docente(page: Page) -> list[dict[str, Any]]:
         )
 
     return turmas
+
+def _extrair_status_unidades_avaliacoes(page: Page) -> dict[str, Any]:
+    """
+    Extrai o status das unidades na página
+    Diário de Classe Digital > Gerenciar Grupos de Avaliação da Unidade.
+
+    Usa os links 'Gerenciar Avaliações da Unidade', que trazem no onclick:
+        - idGrupoAvaliacao
+        - unidade
+
+    Quando idGrupoAvaliacao é "0", a unidade ainda não possui avaliações cadastradas.
+    """
+    caption = ""
+
+    captions = page.locator("caption")
+    if captions.count() > 0:
+        caption = _normalizar_texto(captions.first.inner_text())
+
+    unidades = []
+    links_gerenciar = page.locator("a[title='Gerenciar Avaliações da Unidade']")
+
+    for index in range(links_gerenciar.count()):
+        link = links_gerenciar.nth(index)
+        onclick = link.get_attribute("onclick") or ""
+
+        unidade_match = re.search(r"'unidade'\s*:\s*'([^']+)'", onclick)
+        grupo_match = re.search(r"'idGrupoAvaliacao'\s*:\s*'([^']+)'", onclick)
+
+        unidade = unidade_match.group(1) if unidade_match else str(index + 1)
+        id_grupo_avaliacao = grupo_match.group(1) if grupo_match else ""
+
+        unidades.append(
+            {
+                "unidade": unidade,
+                "id_grupo_avaliacao": id_grupo_avaliacao,
+                "tem_avaliacoes": bool(
+                    id_grupo_avaliacao and id_grupo_avaliacao != "0"
+                ),
+                "onclick": onclick,
+            }
+        )
+
+    total_unidades = len(unidades)
+    unidades_com_avaliacoes = sum(
+        1 for unidade in unidades if unidade.get("tem_avaliacoes")
+    )
+    unidades_sem_avaliacoes = total_unidades - unidades_com_avaliacoes
+
+    return {
+        "caption": caption,
+        "total_unidades": total_unidades,
+        "unidades_com_avaliacoes": unidades_com_avaliacoes,
+        "unidades_sem_avaliacoes": unidades_sem_avaliacoes,
+        "unidades": unidades,
+    }
+
+
+def abrir_cadastro_avaliacoes_turma_sigeduc(
+    email: str,
+    senha: str,
+    id_turma_componente: str,
+) -> AvaliacoesNavigationResult:
+    """
+    Realiza login no SIGEDUC, acessa Diário > Gerenciar Avaliações das Unidades,
+    busca as turmas e seleciona a turma pelo idTurmaComponente.
+
+    Esta etapa apenas posiciona a automação na tela da turma selecionada.
+    O cadastro/verificação das avaliações será implementado em uma etapa posterior.
+    """
+    email = email.strip()
+    senha = senha.strip()
+    id_turma_componente = str(id_turma_componente or "").strip()
+
+    if not email or not senha:
+        return AvaliacoesNavigationResult(
+            success=False,
+            status="credenciais_vazias",
+            message="Email e senha são obrigatórios.",
+        )
+
+    if not id_turma_componente:
+        return AvaliacoesNavigationResult(
+            success=False,
+            status="id_turma_componente_vazio",
+            message="O id_turma_componente da turma não foi informado.",
+        )
+
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=PLAYWRIGHT_HEADLESS)
+            page = browser.new_page()
+            page.set_default_timeout(PLAYWRIGHT_TIMEOUT_MS)
+
+            page.goto(
+                SIGEDUC_LOGIN_URL,
+                wait_until="domcontentloaded",
+                timeout=PLAYWRIGHT_TIMEOUT_MS,
+            )
+
+            page.fill("#email", email)
+            page.fill("#senha", senha)
+            page.click("#submit-btn")
+
+            try:
+                page.wait_for_load_state(
+                    "domcontentloaded",
+                    timeout=PLAYWRIGHT_TIMEOUT_MS,
+                )
+            except PlaywrightTimeoutError:
+                pass
+
+            current_url = page.url
+
+            painel_erros = page.locator("#painel-erros")
+            if painel_erros.count() > 0 and painel_erros.first.is_visible():
+                mensagem = painel_erros.first.inner_text().strip()
+                browser.close()
+
+                return AvaliacoesNavigationResult(
+                    success=False,
+                    status="credenciais_invalidas",
+                    message=mensagem or "Usuário e/ou senha inválidos.",
+                    current_url=current_url,
+                )
+
+            login_ainda_visivel = (
+                page.locator("#email").count() > 0
+                and page.locator("#senha").count() > 0
+                and page.locator("#submit-btn").count() > 0
+            )
+
+            if login_ainda_visivel:
+                browser.close()
+
+                return AvaliacoesNavigationResult(
+                    success=False,
+                    status="credenciais_invalidas",
+                    message="Usuário e/ou senha inválidos.",
+                    current_url=current_url,
+                )
+
+            link_portal_docente = page.locator("a[href*='verPortalDocente.do']")
+
+            if link_portal_docente.count() > 0:
+                link_portal_docente.first.click()
+
+                try:
+                    page.wait_for_load_state(
+                        "domcontentloaded",
+                        timeout=PLAYWRIGHT_TIMEOUT_MS,
+                    )
+                except PlaywrightTimeoutError:
+                    pass
+            else:
+                page.goto(
+                    SIGEDUC_PORTAL_DOCENTE_URL,
+                    wait_until="domcontentloaded",
+                    timeout=PLAYWRIGHT_TIMEOUT_MS,
+                )
+
+            page.wait_for_timeout(1000)
+            current_url = page.url
+
+            diario_menu = page.locator(
+                "td.ThemeOfficeMainItem",
+                has_text="Diário",
+            )
+
+            if diario_menu.count() == 0:
+                browser.close()
+
+                return AvaliacoesNavigationResult(
+                    success=False,
+                    status="menu_diario_nao_encontrado",
+                    message="Não foi possível localizar o menu Diário no portal docente.",
+                    current_url=current_url,
+                )
+
+            diario_menu.first.hover()
+            page.wait_for_timeout(1000)
+
+            gerenciar_avaliacoes = page.locator(
+                "td.ThemeOfficeMenuItemText",
+                has_text="Gerenciar Avaliações das Unidades",
+            )
+
+            if gerenciar_avaliacoes.count() == 0:
+                browser.close()
+
+                return AvaliacoesNavigationResult(
+                    success=False,
+                    status="menu_avaliacoes_nao_encontrado",
+                    message="Não foi possível localizar a opção Gerenciar Avaliações das Unidades.",
+                    current_url=current_url,
+                )
+
+            gerenciar_avaliacoes.first.click(no_wait_after=True)
+            page.wait_for_timeout(3000)
+
+            buscar_button = page.locator("#formAjustesTurma\\:btConfirmarAjustes")
+
+            if buscar_button.count() == 0:
+                browser.close()
+
+                return AvaliacoesNavigationResult(
+                    success=False,
+                    status="botao_buscar_nao_encontrado",
+                    message="Não foi possível localizar o botão Buscar na tela Consultar Turma.",
+                    current_url=page.url,
+                )
+
+            buscar_button.first.click(no_wait_after=True)
+            page.wait_for_timeout(5000)
+
+            seletor_turma = (
+                f"a[onclick*='idTurmaComponente'][onclick*='{id_turma_componente}']"
+            )
+            link_turma = page.locator(seletor_turma)
+
+            if link_turma.count() == 0:
+                total_links = page.locator("a[onclick*='idTurmaComponente']").count()
+                browser.close()
+
+                return AvaliacoesNavigationResult(
+                    success=False,
+                    status="turma_nao_encontrada",
+                    message=(
+                        "A turma não foi encontrada na tela de avaliações. "
+                        f"id_turma_componente={id_turma_componente}. "
+                        f"Links de turma encontrados: {total_links}."
+                    ),
+                    current_url=page.url,
+                    data={
+                        "id_turma_componente": id_turma_componente,
+                        "total_links_turma": total_links,
+                    },
+                )
+
+            link_turma.first.click(no_wait_after=True)
+            page.wait_for_timeout(5000)
+
+            final_url = page.url
+            final_title = page.title()
+            status_unidades = _extrair_status_unidades_avaliacoes(page)
+
+            browser.close()
+
+            return AvaliacoesNavigationResult(
+                success=True,
+                status="turma_selecionada",
+                message="Turma selecionada com sucesso na tela de avaliações.",
+                current_url=final_url,
+                data={
+                    "id_turma_componente": id_turma_componente,
+                    "page_title": final_title,
+                    "status_unidades": status_unidades,
+                },
+            )
+
+    except PlaywrightTimeoutError:
+        return AvaliacoesNavigationResult(
+            success=False,
+            status="timeout",
+            message="Tempo limite excedido ao acessar o cadastro de avaliações.",
+        )
+
+    except Exception as exc:
+        return AvaliacoesNavigationResult(
+            success=False,
+            status="erro",
+            message=f"Erro inesperado ao acessar o cadastro de avaliações: {exc}",
+        )
+
 
 def login_sigeduc(email: str, senha: str) -> LoginResult:
     """

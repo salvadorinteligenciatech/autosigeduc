@@ -3,6 +3,7 @@ from tkinter import messagebox, ttk
 
 from app.services.access_control_service import verificar_acesso
 from app.services.auth_service import autenticar_no_sigeduc
+from app.services.avaliacoes_service import abrir_cadastro_avaliacoes_turma
 from app.services.local_storage_service import carregar_professor_data
 from app.services.professor_data_service import carregar_dados_professor
 
@@ -522,6 +523,9 @@ class MainWindow(tk.Tk):
 
         self.cadastrar_avaliacoes_turmas = turmas
 
+        if not hasattr(self, "cadastrar_avaliacoes_status_por_turma"):
+            self.cadastrar_avaliacoes_status_por_turma = {}
+
         self.cad_avaliacoes_escola_var = tk.StringVar(value="Todas")
         self.cad_avaliacoes_turno_var = tk.StringVar(value="Todos")
         self.cad_avaliacoes_componente_var = tk.StringVar(value="Todos")
@@ -753,6 +757,195 @@ class MainWindow(tk.Tk):
                 anchor="w"
             )
             detalhes_label.pack(fill="x", padx=10, pady=(0, 8))
+
+            status_avaliacoes_texto = self._formatar_status_avaliacoes_turma(
+                turma.get("id_turma_componente")
+            )
+
+            status_avaliacoes_label = tk.Label(
+                card,
+                text=status_avaliacoes_texto,
+                font=("Arial", 11, "bold"),
+                justify="left",
+                anchor="w",
+                fg="#004080"
+            )
+            status_avaliacoes_label.pack(fill="x", padx=10, pady=(0, 8))
+
+            abrir_button = tk.Button(
+                card,
+                text="ABRIR CADASTRO DE AVALIAÇÕES",
+                font=("Arial", 10, "bold"),
+                command=lambda turma_selecionada=turma: self._on_abrir_cadastro_avaliacoes_click(
+                    turma_selecionada
+                )
+            )
+            abrir_button.pack(anchor="w", padx=10, pady=(0, 10))
+
+    def _formatar_status_avaliacoes_turma(self, id_turma_componente):
+        """
+        Formata o status das avaliações já verificadas para uma turma.
+        """
+        id_turma_componente = str(id_turma_componente or "").strip()
+        status = getattr(
+            self,
+            "cadastrar_avaliacoes_status_por_turma",
+            {}
+        ).get(id_turma_componente)
+
+        if not status:
+            return "Status das avaliações: ainda não verificado no SIGEDUC."
+
+        unidades = status.get("unidades", [])
+        total = status.get("total_unidades", len(unidades))
+        com_avaliacoes = status.get("unidades_com_avaliacoes", 0)
+        sem_avaliacoes = status.get("unidades_sem_avaliacoes", 0)
+
+        linhas = [
+            "Status das avaliações no SIGEDUC:",
+            f"Unidades verificadas: {total}",
+            f"Unidades com avaliações cadastradas: {com_avaliacoes}",
+            f"Unidades sem avaliações cadastradas: {sem_avaliacoes}",
+        ]
+
+        for unidade in unidades:
+            numero_unidade = unidade.get("unidade", "não informada")
+            tem_avaliacoes = unidade.get("tem_avaliacoes", False)
+            id_grupo = unidade.get("id_grupo_avaliacao", "não informado")
+
+            if tem_avaliacoes:
+                situacao = "cadastrada"
+            else:
+                situacao = "não cadastrada"
+
+            linhas.append(
+                f"{numero_unidade}ª Unidade: avaliação {situacao} "
+                f"(idGrupoAvaliacao={id_grupo})"
+            )
+
+        return "\n".join(linhas)
+
+    def _registrar_status_avaliacoes_turma(self, id_turma_componente, resultado_data):
+        """
+        Guarda em memória o status das avaliações de uma turma.
+        """
+        id_turma_componente = str(id_turma_componente or "").strip()
+
+        if not id_turma_componente or not resultado_data:
+            return
+
+        status_unidades = resultado_data.get("status_unidades")
+
+        if not status_unidades:
+            return
+
+        if not hasattr(self, "cadastrar_avaliacoes_status_por_turma"):
+            self.cadastrar_avaliacoes_status_por_turma = {}
+
+        self.cadastrar_avaliacoes_status_por_turma[id_turma_componente] = status_unidades
+
+    def _on_abrir_cadastro_avaliacoes_click(self, turma):
+        """
+        Aciona a automação para abrir a tela de cadastro de avaliações
+        da turma selecionada.
+        """
+        if not self.current_user_email or not self.current_user_password:
+            messagebox.showerror(
+                "Sessão inválida",
+                "Não foi possível identificar o usuário logado. Faça login novamente."
+            )
+            return
+
+        id_turma_componente = str(turma.get("id_turma_componente", "")).strip()
+
+        if not id_turma_componente:
+            messagebox.showwarning(
+                "Turma sem identificador",
+                "Esta turma não possui id_turma_componente para seleção no SIGEDUC."
+            )
+            return
+
+        turma_nome = turma.get("turma", "Turma não informada")
+        componente = turma.get("componente", "Componente não informado")
+
+        confirmar = messagebox.askyesno(
+            "Abrir cadastro de avaliações",
+            (
+                "Deseja abrir o cadastro de avaliações desta turma no SIGEDUC?\n\n"
+                f"Turma: {turma_nome}\n"
+                f"Componente: {componente}\n"
+                f"id_turma_componente: {id_turma_componente}"
+            )
+        )
+
+        if not confirmar:
+            return
+
+        self.config(cursor="watch")
+        self.update_idletasks()
+
+        resultado = abrir_cadastro_avaliacoes_turma(
+            email=self.current_user_email,
+            senha=self.current_user_password,
+            id_turma_componente=id_turma_componente,
+        )
+
+        self.config(cursor="")
+        self.update_idletasks()
+
+        if not resultado.success:
+            messagebox.showerror(
+                "Erro ao abrir cadastro de avaliações",
+                resultado.message
+            )
+            return
+
+        page_title = ""
+        status_resumo = ""
+
+        if resultado.data:
+            page_title = resultado.data.get("page_title", "")
+            self._registrar_status_avaliacoes_turma(
+                id_turma_componente,
+                resultado.data
+            )
+
+            status_unidades = resultado.data.get("status_unidades", {})
+            unidades = status_unidades.get("unidades", [])
+
+            if unidades:
+                linhas_status = [
+                    "Status das unidades:"
+                ]
+
+                for unidade in unidades:
+                    numero_unidade = unidade.get("unidade", "não informada")
+                    tem_avaliacoes = unidade.get("tem_avaliacoes", False)
+
+                    if tem_avaliacoes:
+                        situacao = "cadastrada"
+                    else:
+                        situacao = "não cadastrada"
+
+                    linhas_status.append(
+                        f"{numero_unidade}ª Unidade: avaliação {situacao}"
+                    )
+
+                status_resumo = "\n".join(linhas_status)
+
+        self._render_cadastrar_avaliacoes_resultados()
+
+        messagebox.showinfo(
+            "Cadastro de avaliações acessado",
+            (
+                f"{resultado.message}\n\n"
+                f"Turma: {turma_nome}\n"
+                f"Componente: {componente}\n"
+                f"URL final: {resultado.current_url}\n"
+                f"Título da página: {page_title}\n\n"
+                f"{status_resumo}"
+            )
+        )
 
     def _show_lancar_notas_placeholder(self):
         scrollable_content = self._create_scrollable_content_area()
