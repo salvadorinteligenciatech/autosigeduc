@@ -1,8 +1,9 @@
 import tkinter as tk
-from tkinter import messagebox
+from tkinter import messagebox, ttk
 
 from app.services.access_control_service import verificar_acesso
 from app.services.auth_service import autenticar_no_sigeduc
+from app.services.professor_data_service import carregar_dados_professor
 
 
 class MainWindow(tk.Tk):
@@ -17,6 +18,7 @@ class MainWindow(tk.Tk):
         self.senha_var = tk.StringVar()
 
         self.current_user_email = None
+        self.current_user_password = None
 
         self._show_login_screen()
 
@@ -137,6 +139,7 @@ class MainWindow(tk.Tk):
                 return
 
             self.current_user_email = email
+            self.current_user_password = senha
             self._show_main_screen()
 
     def _show_main_screen(self):
@@ -363,41 +366,56 @@ class MainWindow(tk.Tk):
 
     def _on_carregar_dados_click(self):
         """
-        Placeholder temporário.
-
-        Depois este método vai chamar a automação real do SIGEDUC
-        e preencher as listas com as escolas, turnos, disciplinas e turmas
-        encontradas para o professor.
+        Carrega os dados reais do professor no SIGEDUC e atualiza a tela.
         """
+        if not self.current_user_email or not self.current_user_password:
+            messagebox.showerror(
+                "Sessão inválida",
+                "Não foi possível identificar o usuário logado. Faça login novamente."
+            )
+            return
 
-        escolas = [
-            "Escola Estadual Exemplo 1",
-            "Escola Municipal Exemplo 2",
-            "Colégio Estadual Exemplo 3"
-        ]
+        self._fill_section_values(self.escolas_container, ["Carregando..."])
+        self._fill_section_values(self.turnos_container, ["Carregando..."])
+        self._fill_section_values(self.disciplinas_container, ["Carregando..."])
+        self._fill_section_values(self.turmas_container, ["Carregando..."])
 
-        turnos = [
-            "Matutino",
-            "Vespertino",
-            "Noturno"
-        ]
+        self.update_idletasks()
 
-        disciplinas = [
-            "Física",
-            "Química"
-        ]
+        resultado = carregar_dados_professor(
+            email=self.current_user_email,
+            senha=self.current_user_password,
+        )
 
-        turmas = [
-            "1º Ano A",
-            "1º Ano B",
-            "2º Ano A",
-            "3º Ano C"
-        ]
+        if not resultado.success:
+            messagebox.showerror(
+                "Erro ao carregar dados",
+                resultado.message
+            )
+
+            self._fill_section_values(self.escolas_container, [])
+            self._fill_section_values(self.turnos_container, [])
+            self._fill_section_values(self.disciplinas_container, [])
+            self._fill_section_values(self.turmas_container, [])
+            return
+
+        data = resultado.data or {}
+        resumo = data.get("resumo", {})
+
+        escolas = resumo.get("escolas", [])
+        turnos = resumo.get("turnos", [])
+        disciplinas = resumo.get("componentes", [])
+        turmas = resumo.get("turmas", [])
 
         self._fill_section_values(self.escolas_container, escolas)
         self._fill_section_values(self.turnos_container, turnos)
         self._fill_section_values(self.disciplinas_container, disciplinas)
         self._fill_section_values(self.turmas_container, turmas)
+
+        messagebox.showinfo(
+            "Dados carregados",
+            f"{resultado.message}\n\nTotal de turmas encontradas: {resumo.get('total_turmas', 0)}"
+        )
 
     def _show_lancar_notas_placeholder(self):
         scrollable_content = self._create_scrollable_content_area()
