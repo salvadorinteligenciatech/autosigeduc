@@ -3,6 +3,7 @@ from tkinter import messagebox, ttk
 
 from app.services.access_control_service import verificar_acesso
 from app.services.auth_service import autenticar_no_sigeduc
+from app.services.local_storage_service import carregar_professor_data
 from app.services.professor_data_service import carregar_dados_professor
 
 
@@ -174,6 +175,14 @@ class MainWindow(tk.Tk):
             command=self._show_resumo_placeholder
         )
         resumo_button.pack(side="left", padx=10, pady=10)
+
+        cadastrar_avaliacoes_button = tk.Button(
+            nav_bar,
+            text="Cadastrar avaliações",
+            font=("Arial", 11),
+            command=self._show_cadastrar_avaliacoes_screen
+        )
+        cadastrar_avaliacoes_button.pack(side="left", padx=10, pady=10)
 
         lancar_notas_button = tk.Button(
             nav_bar,
@@ -416,6 +425,334 @@ class MainWindow(tk.Tk):
             "Dados carregados",
             f"{resultado.message}\n\nTotal de turmas encontradas: {resumo.get('total_turmas', 0)}"
         )
+
+    def _show_cadastrar_avaliacoes_screen(self):
+        """
+        Tela para consultar os dados locais do professor e preparar filtros
+        para o cadastro de avaliações.
+        """
+        scrollable_content = self._create_scrollable_content_area()
+
+        title = tk.Label(
+            scrollable_content,
+            text="Cadastrar avaliações",
+            font=("Arial", 22, "bold")
+        )
+        title.pack(pady=(35, 10))
+
+        description = tk.Label(
+            scrollable_content,
+            text=(
+                "Esta tela usa os dados carregados localmente para verificar o "
+                "status das turmas e preparar os filtros do cadastro de avaliações."
+            ),
+            font=("Arial", 13),
+            wraplength=760,
+            justify="center"
+        )
+        description.pack(pady=(0, 20))
+
+        professor_payload = self._load_local_professor_payload()
+
+        if not professor_payload:
+            warning = tk.Label(
+                scrollable_content,
+                text=(
+                    "Nenhum dado local foi encontrado para este usuário.\n"
+                    "Acesse a aba 'Carregar os meus dados' e clique em CARREGAR antes de cadastrar avaliações."
+                ),
+                font=("Arial", 13, "bold"),
+                fg="#a00000",
+                justify="center"
+            )
+            warning.pack(pady=(35, 20))
+
+            voltar_button = tk.Button(
+                scrollable_content,
+                text="IR PARA CARREGAR MEUS DADOS",
+                font=("Arial", 11, "bold"),
+                command=self._show_carregar_dados_placeholder
+            )
+            voltar_button.pack(pady=(0, 30))
+            return
+
+        data = professor_payload.get("data", {})
+        resumo = data.get("resumo", {})
+        turmas = data.get("turmas", [])
+        updated_at = professor_payload.get("updated_at", "Não informado")
+
+        status_frame = tk.Frame(scrollable_content, relief="groove", borderwidth=1)
+        status_frame.pack(fill="x", padx=40, pady=(0, 20))
+
+        status_title = tk.Label(
+            status_frame,
+            text="Status dos dados locais",
+            font=("Arial", 13, "bold"),
+            anchor="w"
+        )
+        status_title.pack(fill="x", padx=12, pady=(10, 5))
+
+        status_text = (
+            f"Última atualização local: {updated_at}\n"
+            f"Total de turmas encontradas: {resumo.get('total_turmas', len(turmas))}\n"
+            f"Escolas: {len(resumo.get('escolas', []))}\n"
+            f"Turnos: {len(resumo.get('turnos', []))}\n"
+            f"Componentes: {len(resumo.get('componentes', []))}"
+        )
+
+        status_label = tk.Label(
+            status_frame,
+            text=status_text,
+            font=("Arial", 12),
+            justify="left",
+            anchor="w"
+        )
+        status_label.pack(fill="x", padx=12, pady=(0, 12))
+
+        filtros_frame = tk.Frame(scrollable_content, relief="groove", borderwidth=1)
+        filtros_frame.pack(fill="x", padx=40, pady=(0, 20))
+
+        filtros_title = tk.Label(
+            filtros_frame,
+            text="Filtros para cadastro de avaliações",
+            font=("Arial", 13, "bold"),
+            anchor="w"
+        )
+        filtros_title.pack(fill="x", padx=12, pady=(10, 8))
+
+        self.cadastrar_avaliacoes_turmas = turmas
+
+        self.cad_avaliacoes_escola_var = tk.StringVar(value="Todas")
+        self.cad_avaliacoes_turno_var = tk.StringVar(value="Todos")
+        self.cad_avaliacoes_componente_var = tk.StringVar(value="Todos")
+        self.cad_avaliacoes_turma_var = tk.StringVar(value="Todas")
+
+        filtros_grid = tk.Frame(filtros_frame)
+        filtros_grid.pack(fill="x", padx=12, pady=(0, 12))
+
+        self._create_filter_combobox(
+            filtros_grid,
+            label_text="Escola",
+            variable=self.cad_avaliacoes_escola_var,
+            values=["Todas"] + self._get_unique_values(turmas, "escola"),
+            row=0,
+            column=0
+        )
+
+        self._create_filter_combobox(
+            filtros_grid,
+            label_text="Turno",
+            variable=self.cad_avaliacoes_turno_var,
+            values=["Todos"] + self._get_unique_values(turmas, "turno"),
+            row=0,
+            column=1
+        )
+
+        self._create_filter_combobox(
+            filtros_grid,
+            label_text="Componente",
+            variable=self.cad_avaliacoes_componente_var,
+            values=["Todos"] + self._get_unique_values(turmas, "componente"),
+            row=1,
+            column=0
+        )
+
+        self._create_filter_combobox(
+            filtros_grid,
+            label_text="Turma",
+            variable=self.cad_avaliacoes_turma_var,
+            values=["Todas"] + self._get_unique_values(turmas, "turma"),
+            row=1,
+            column=1
+        )
+
+        buttons_frame = tk.Frame(filtros_frame)
+        buttons_frame.pack(fill="x", padx=12, pady=(0, 12))
+
+        aplicar_button = tk.Button(
+            buttons_frame,
+            text="APLICAR FILTROS",
+            font=("Arial", 10, "bold"),
+            command=self._render_cadastrar_avaliacoes_resultados
+        )
+        aplicar_button.pack(side="left", padx=(0, 10))
+
+        limpar_button = tk.Button(
+            buttons_frame,
+            text="LIMPAR FILTROS",
+            font=("Arial", 10),
+            command=self._reset_cadastrar_avaliacoes_filters
+        )
+        limpar_button.pack(side="left")
+
+        self.cadastrar_avaliacoes_resultados_frame = tk.Frame(scrollable_content)
+        self.cadastrar_avaliacoes_resultados_frame.pack(fill="both", expand=True, padx=40, pady=(0, 30))
+
+        self._render_cadastrar_avaliacoes_resultados()
+
+    def _load_local_professor_payload(self):
+        """
+        Carrega o JSON local do professor logado.
+        """
+        if not self.current_user_email:
+            return None
+
+        try:
+            return carregar_professor_data(self.current_user_email)
+        except Exception as exc:
+            messagebox.showerror(
+                "Erro ao ler dados locais",
+                f"Não foi possível carregar o JSON local do professor: {exc}"
+            )
+            return None
+
+    def _get_unique_values(self, items, key):
+        """
+        Retorna valores únicos e ordenados de uma chave da lista de turmas.
+        """
+        return sorted(
+            {
+                str(item.get(key, "")).strip()
+                for item in items
+                if str(item.get(key, "")).strip()
+            }
+        )
+
+    def _create_filter_combobox(self, parent, label_text, variable, values, row, column):
+        """
+        Cria um filtro com Label + Combobox.
+        """
+        frame = tk.Frame(parent)
+        frame.grid(row=row, column=column, sticky="ew", padx=8, pady=6)
+
+        parent.grid_columnconfigure(column, weight=1)
+
+        label = tk.Label(
+            frame,
+            text=label_text,
+            font=("Arial", 11, "bold"),
+            anchor="w"
+        )
+        label.pack(fill="x")
+
+        combobox = ttk.Combobox(
+            frame,
+            textvariable=variable,
+            values=values,
+            state="readonly",
+            font=("Arial", 11)
+        )
+        combobox.pack(fill="x", pady=(3, 0))
+
+        return combobox
+
+    def _get_filtered_cadastrar_avaliacoes_turmas(self):
+        """
+        Aplica os filtros selecionados na tela Cadastrar avaliações.
+        """
+        turmas = getattr(self, "cadastrar_avaliacoes_turmas", [])
+
+        escola = self.cad_avaliacoes_escola_var.get()
+        turno = self.cad_avaliacoes_turno_var.get()
+        componente = self.cad_avaliacoes_componente_var.get()
+        turma_nome = self.cad_avaliacoes_turma_var.get()
+
+        filtradas = []
+
+        for turma in turmas:
+            if escola != "Todas" and turma.get("escola") != escola:
+                continue
+
+            if turno != "Todos" and turma.get("turno") != turno:
+                continue
+
+            if componente != "Todos" and turma.get("componente") != componente:
+                continue
+
+            if turma_nome != "Todas" and turma.get("turma") != turma_nome:
+                continue
+
+            filtradas.append(turma)
+
+        return filtradas
+
+    def _reset_cadastrar_avaliacoes_filters(self):
+        """
+        Limpa os filtros da tela Cadastrar avaliações.
+        """
+        self.cad_avaliacoes_escola_var.set("Todas")
+        self.cad_avaliacoes_turno_var.set("Todos")
+        self.cad_avaliacoes_componente_var.set("Todos")
+        self.cad_avaliacoes_turma_var.set("Todas")
+        self._render_cadastrar_avaliacoes_resultados()
+
+    def _render_cadastrar_avaliacoes_resultados(self):
+        """
+        Renderiza o resumo das turmas filtradas.
+        """
+        for widget in self.cadastrar_avaliacoes_resultados_frame.winfo_children():
+            widget.destroy()
+
+        turmas_filtradas = self._get_filtered_cadastrar_avaliacoes_turmas()
+
+        resumo_label = tk.Label(
+            self.cadastrar_avaliacoes_resultados_frame,
+            text=f"Turmas encontradas com os filtros atuais: {len(turmas_filtradas)}",
+            font=("Arial", 13, "bold"),
+            anchor="w"
+        )
+        resumo_label.pack(fill="x", pady=(0, 10))
+
+        if not turmas_filtradas:
+            empty_label = tk.Label(
+                self.cadastrar_avaliacoes_resultados_frame,
+                text="Nenhuma turma encontrada para os filtros selecionados.",
+                font=("Arial", 12),
+                anchor="w"
+            )
+            empty_label.pack(fill="x", pady=10)
+            return
+
+        for index, turma in enumerate(turmas_filtradas, start=1):
+            card = tk.Frame(
+                self.cadastrar_avaliacoes_resultados_frame,
+                relief="groove",
+                borderwidth=1
+            )
+            card.pack(fill="x", pady=6)
+
+            titulo = tk.Label(
+                card,
+                text=(
+                    f"{index}. {turma.get('turma', 'Turma não informada')} "
+                    f"— {turma.get('componente', 'Componente não informado')}"
+                ),
+                font=("Arial", 12, "bold"),
+                anchor="w"
+            )
+            titulo.pack(fill="x", padx=10, pady=(8, 3))
+
+            status_lancar = "Sim" if turma.get("tem_lancar_resultados") else "Não"
+
+            detalhes = (
+                f"Escola: {turma.get('escola', 'Não informado')}\n"
+                f"Turno: {turma.get('turno', 'Não informado')}\n"
+                f"Oferta de ensino: {turma.get('oferta_ensino', 'Não informado')}\n"
+                f"Ano/Série: {turma.get('ano_serie_outros', 'Não informado')}\n"
+                f"Periodicidade: {turma.get('periodicidade', 'Não informado')}\n"
+                f"Quantidade de estudantes: {turma.get('qtd_estudantes', 'Não informado')}\n"
+                f"id_turma_componente: {turma.get('id_turma_componente', 'Não informado')}\n"
+                f"Tem acesso para lançar resultados: {status_lancar}"
+            )
+
+            detalhes_label = tk.Label(
+                card,
+                text=detalhes,
+                font=("Arial", 11),
+                justify="left",
+                anchor="w"
+            )
+            detalhes_label.pack(fill="x", padx=10, pady=(0, 8))
 
     def _show_lancar_notas_placeholder(self):
         scrollable_content = self._create_scrollable_content_area()
